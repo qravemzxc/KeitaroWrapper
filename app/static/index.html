@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keitaro Wrapper</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">K</span> Keitaro Wrapper</div>
+  <nav>
+    <a href="#create" data-tab="create">Новая кампания</a>
+    <a href="#edit" data-tab="edit">Редактор кампаний</a>
+  </nav>
+  <a class="docs" href="/docs" target="_blank">API docs</a>
+</header>
+
+<main>
+  <!-- ============ Part 1: creator ============ -->
+  <section id="tab-create" class="tab">
+    <div class="card narrow">
+      <h1>Новая кампания</h1>
+      <p class="muted">Создаёт кампанию с двумя потоками: <b>1)</b> посетители из выбранных стран → Google,
+        <b>2)</b> все остальные → выбранный оффер.</p>
+      <form id="create-form" autocomplete="off">
+        <label>Название
+          <div class="prefixed"><span id="prefix"></span><input name="name" required placeholder="campaign1"></div>
+        </label>
+        <label>Гео <span class="hint">ISO-коды через запятую</span>
+          <input name="geo" required placeholder="MX, AU, RO">
+        </label>
+        <label>Оффер
+          <div class="ac" id="create-offer-ac">
+            <input placeholder="Поиск по ID или названию оффера" required>
+          </div>
+        </label>
+        <details>
+          <summary>Домен, группа, источник</summary>
+          <label>Домен <select name="domain_id"></select></label>
+          <label>Группа <select name="group_id"></select></label>
+          <label>Источник <select name="traffic_source_id"></select></label>
+        </details>
+        <button class="btn primary wide" type="submit">Создать</button>
+      </form>
+      <div id="create-result"></div>
+    </div>
+  </section>
+
+  <!-- ============ Part 2: editor ============ -->
+  <section id="tab-edit" class="tab">
+    <div class="editor">
+      <aside class="card list">
+        <div class="list-head">
+          <input id="camp-search" placeholder="Поиск: имя или ID">
+          <label class="check"><input type="checkbox" id="camp-mine" checked> только мои (<span class="prefix-label"></span>)</label>
+        </div>
+        <ul id="camp-list"></ul>
+      </aside>
+      <div class="card detail" id="detail">
+        <div class="empty">Выберите кампанию слева или введите её ID в поиске</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
