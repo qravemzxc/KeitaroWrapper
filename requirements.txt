@@ -5,6 +5,4 @@ aiosqlite==0.20.0
 alembic==1.14.0
 httpx==0.28.1
 pydantic-settings==2.6.1
-# tests
-pytest==8.3.4
-pytest-asyncio==0.24.0
+tzdata==2024.2          # time zone database for zoneinfo (needed on Windows)

@@ -1,6 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
-.pytest_cache/
+
+# local settings and data (API key, SQLite DB)
 .env
 *.db
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

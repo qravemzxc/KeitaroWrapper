@@ -2,7 +2,73 @@
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const state = { meta: null, campaignId: null, detail: null, interval: "today" };
+const state = { meta: null, campaignId: null, detail: null, interval: "today", drafts: {}, syncedAt: null };
+// drafts: { [streamId]: [op, ...] } - editor actions not pushed to Keitaro yet, in the order they were made:
+//   {type: "add", id, name}  - new offer (or a removed one being returned);
+//   {type: "remove", id}     - existing offer marked for removal
+
+// Even split, remainder to the first offers: 3 -> 34/33/33 (same as the server and Keitaro).
+const evenShares = (n, total = 100) => Array.from({ length: n }, (_, i) => Math.floor(total / n) + (i < total % n ? 1 : 0));
+// What the stream will look like after the push: final offer ids and their (even) shares.
+// Pinned offers keep their share, the rest of 100% is split evenly (same rules as app/shares.py).
+// Returns {share: {id: %}, error}; on error the free offers get 0 and the push is blocked.
+function sharesWithPins(ids, pinned) {
+  const pins = Object.fromEntries(Object.entries(pinned).filter(([id]) => ids.includes(+id)).map(([id, v]) => [+id, v]));
+  const free = ids.filter((id) => !(id in pins));
+  const rest = 100 - Object.values(pins).reduce((a, v) => a + v, 0);
+  let error = null;
+  if (!free.length && rest !== 0) error = `Все офферы закреплены, их доли в сумме ${100 - rest}%, а нужно 100%. Открепите один из офферов.`;
+  else if (free.length && rest < free.length) error = `Закреплённые офферы занимают ${100 - rest}%: остальным офферам не хватает доли. Открепите один из офферов.`;
+  const even = error ? free.map(() => 0) : evenShares(free.length, rest);
+  const share = { ...pins };
+  free.forEach((id, i) => (share[id] = even[i]));
+  return { share, error };
+}
+
+// "Статус": state of the offer in the Keitaro stream + its state in the draft.
+function statusCell(kind, o) {
+  const badges = {
+    new: `<span class="tag new">новый</span>`,
+    removing: `<span class="tag del">будет удалён</span>`,
+    removed: `<span class="tag del">удалён</span>`,
+  };
+  const live = o.state === "active" ? `<span class="tag on">активен</span>` : `<span class="tag">выключен</span>`;
+  const main = badges[kind] || live;
+  const pin = o.pinned && !kind ? ` <span class="tag pin">закреплён</span>` : "";
+  return `<td class="status">${main}${pin}</td>`;
+}
+
+// "Трендс": clicks in the selected period vs the previous period of the same length.
+const TREND_LABEL = { today: "вчера к этому же времени", yesterday: "позавчера", "7_days_ago": "предыдущие 7 дней", "1_month_ago": "предыдущие 30 дней" };
+function trendCell(t) {
+  if (!t) return `<td class="num trend muted" title="Для периода «Всё время» тренда нет">—</td>`;
+  const title = `Клики: ${t.current} сейчас, ${t.previous} — ${TREND_LABEL[state.interval] || "предыдущий период"}`;
+  if (!t.current && !t.previous) return `<td class="num trend muted" title="${title}">—</td>`;
+  if (t.change_pct === null) return `<td class="num trend up" title="${title}">↑ новый трафик</td>`;
+  if (t.change_pct === 0) return `<td class="num trend muted" title="${title}">→ 0%</td>`;
+  const up = t.change_pct > 0;
+  return `<td class="num trend ${up ? "up" : "down"}" title="${title}">${up ? "↑" : "↓"} ${Math.abs(t.change_pct)}%</td>`;
+}
+
+function draftView(s) {
+  const ops = state.drafts[s.id] || [];
+  const removed = new Set(ops.filter((o) => o.type === "remove").map((o) => o.id));
+  const added = ops.filter((o) => o.type === "add");
+  const finalIds = [...s.offers.filter((o) => !removed.has(o.offer_id)).map((o) => o.offer_id), ...added.map((o) => o.id)];
+  const pinned = Object.fromEntries(s.offers.filter((o) => o.pinned && !removed.has(o.offer_id)).map((o) => [o.offer_id, o.share]));
+  const { share, error } = sharesWithPins(finalIds, pinned);
+  return { ops, removed, added, finalIds, share, error, pending: ops.length > 0 };
+}
+// Pin icon for pinning an offer's share.
+const PIN_ICON = `<svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/>
+  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>`;
+// Trash-can icon for deleting an offer (inline SVG: looks the same in every browser, follows the text color).
+const TRASH_ICON = `<svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>
+  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+const draftCount = () => Object.values(state.drafts).reduce((a, l) => a + l.length, 0);
+window.addEventListener("beforeunload", (e) => { if (draftCount()) { e.preventDefault(); e.returnValue = ""; } });
 
 async function api(method, url, body) {
   const res = await fetch(url, {
@@ -24,7 +90,7 @@ function toast(msg, isError = false) {
   el.className = "toast" + (isError ? " error" : "");
   el.textContent = msg;
   $("#toast").append(el);
-  setTimeout(() => el.remove(), isError ? 7000 : 3500);
+  setTimeout(() => el.remove(), Math.max(isError ? 7000 : 3500, msg.length * 60));  // long messages stay longer
 }
 
 // ---------------------------------------------------------------- offer autocomplete
@@ -111,6 +177,17 @@ async function initMeta() {
 
 const createAc = offerAutocomplete($("#create-offer-ac"));
 
+// Browser validation messages ("Please fill out this field") follow the browser language: show them in Russian.
+// The message must be set before the browser validates the form, i.e. on the submit button click
+// (Enter in a field also "clicks" it). Typing clears it so the field is not stuck as invalid.
+function setRequiredMessages(form) {
+  form.querySelectorAll("input[required]").forEach((i) => i.setCustomValidity(i.value.trim() ? "" : "Заполните это поле"));
+}
+document.querySelectorAll("form").forEach((form) => {
+  form.querySelectorAll("[type=submit]").forEach((b) => b.addEventListener("click", () => setRequiredMessages(form)));
+  form.querySelectorAll("input[required]").forEach((i) => i.addEventListener("input", () => i.setCustomValidity("")));
+});
+
 $("#create-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
@@ -164,28 +241,53 @@ $("#camp-list").addEventListener("click", (e) => {
 });
 
 async function openCampaign(id) {
+  if (id !== state.campaignId && draftCount()) {
+    if (!confirm("Есть офферы, которые не запушены в Keitaro. Уйти и потерять их?")) {
+      history.replaceState(null, "", `#edit/${state.campaignId}`);
+      return;
+    }
+  }
+  if (id !== state.campaignId) state.drafts = {};
   state.campaignId = id;
   document.querySelectorAll("#camp-list li").forEach((li) => li.classList.toggle("active", +li.dataset.id === id));
   const box = $("#detail");
   box.classList.add("loading");
   try {
     const d = await api("GET", `/api/campaigns/${id}?interval=${state.interval}`);
+    if (state.campaignId !== id) return null;  // the user already opened another campaign
     renderDetail(d);
+    return d;
   } catch (e) {
     box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return null;
   } finally { box.classList.remove("loading"); }
 }
 
-async function mutate(method, url, body, okMsg) {
+async function mutate(method, url, body, okMsg, onSuccess) {
   const box = $("#detail");
   box.classList.add("loading");
   try {
     const sep = url.includes("?") ? "&" : "?";
     const d = await api(method, `${url}${sep}interval=${state.interval}`, body);
+    onSuccess?.();
     renderDetail(d);
     toast(okMsg);
   } catch (e) { toast(e.message, true); }
   finally { box.classList.remove("loading"); }
+}
+
+// ---------------------------------------------------------------- refresh from Keitaro
+// "⟳ Обновить офферы" re-reads the campaign from Keitaro. Offers deleted directly in Keitaro
+// come back from the server as removed (dimmed, 0%, "Вернуть") and are simply shown in the table.
+function updateSyncLabel() {
+  document.querySelectorAll(".sync-status").forEach((el) => {
+    el.textContent = state.syncedAt ? `Данные из Keitaro на ${state.syncedAt.toLocaleTimeString()}` : "";
+  });
+}
+
+async function refreshOffers() {
+  // just re-read the campaign: whatever changed in Keitaro is shown in the table
+  if (state.detail) await openCampaign(state.detail.id);
 }
 
 function filterText(f) {
@@ -193,8 +295,25 @@ function filterText(f) {
   return `${f.name} (${f.mode}): ${JSON.stringify(f.payload)}`;
 }
 
+// Drop draft actions that no longer make sense with fresh data from Keitaro:
+// "remove" of an offer that is already gone, "add" of an offer that is already in the stream.
+function pruneDrafts(d) {
+  const dropped = [];
+  for (const [sid, ops] of Object.entries(state.drafts)) {
+    const s = d.streams.find((x) => x.id === +sid);
+    const present = new Set((s?.offers || []).map((o) => o.offer_id));
+    const keep = s ? ops.filter((op) => (op.type === "remove" ? present.has(op.id) : !present.has(op.id))) : [];
+    ops.filter((op) => !keep.includes(op)).forEach((op) => dropped.push(op.id));
+    if (keep.length) state.drafts[sid] = keep; else delete state.drafts[sid];
+  }
+  return dropped;
+}
+
 function renderDetail(d) {
+  const dropped = pruneDrafts(d);
+  if (dropped.length) toast(`Черновик скорректирован по данным Keitaro: офферы ${dropped.map((i) => "#" + i).join(", ")}`);
   state.detail = d;
+  state.syncedAt = new Date();
   const intervals = state.meta?.intervals || { today: "Сегодня" };
   const box = $("#detail");
   box.innerHTML = `
@@ -218,21 +337,56 @@ function renderDetail(d) {
   $("#interval").onchange = (e) => { state.interval = e.target.value; openCampaign(d.id); };
   $("#refresh").onclick = () => openCampaign(d.id);
   $("#history").addEventListener("toggle", loadHistory);
-
-  box.querySelectorAll("[data-remove]").forEach((b) => b.onclick = () => {
-    const [sid, oid] = b.dataset.remove.split(":").map(Number);
-    const offer = d.streams.find((s) => s.id === sid).offers.find((o) => o.offer_id === oid);
-    if (!confirm(`Удалить оффер [${oid}] ${offer.name}?\nДоли оставшихся офферов будут пересчитаны поровну.`)) return;
-    mutate("DELETE", `/api/campaigns/${d.id}/offers/${oid}?stream_id=${sid}`, null, `Оффер ${oid} удалён`);
-  });
+  updateSyncLabel();
 
   box.querySelectorAll(".stream[data-offers]").forEach((el) => {
     const sid = +el.dataset.id;
     const ac = offerAutocomplete($(".ac", el));
-    $(".add-btn", el).onclick = () => {
-      if (!ac.selected) { toast("Выберите оффер из списка", true); return; }
-      mutate("POST", `/api/campaigns/${d.id}/offers`, { offer_id: ac.selected.id, stream_id: sid }, `Оффер ${ac.selected.id} добавлен`);
+    const stream = d.streams.find((x) => x.id === sid);
+    const view = draftView(stream);
+    const setOps = (ops) => {
+      if (ops.length) state.drafts[sid] = ops; else delete state.drafts[sid];
+      renderDetail(d);
     };
+
+    // Nothing below talks to Keitaro: every action only changes the draft until "Запушить".
+    $(".add-btn", el).onclick = () => {
+      const o = ac.selected;
+      if (!o) { toast("Выберите оффер из списка", true); return; }
+      if (view.removed.has(o.id)) { setOps(view.ops.filter((op) => !(op.type === "remove" && op.id === o.id))); return; }
+      if (view.finalIds.includes(o.id)) { toast(`Оффер ${o.id} уже есть в потоке`, true); return; }
+      setOps([...view.ops, { type: "add", id: o.id, name: o.name }]);
+    };
+    el.querySelectorAll("[data-remove]").forEach((b) => b.onclick = () => {
+      const id = +b.dataset.remove;
+      if (view.finalIds.length <= 1) { toast("Нельзя убрать последний оффер: поток останется пустым", true); return; }
+      const isNew = view.added.some((op) => op.id === id);
+      // a new (not pushed) offer simply leaves the draft; an existing one is marked for removal
+      setOps(isNew ? view.ops.filter((op) => !(op.type === "add" && op.id === id)) : [...view.ops, { type: "remove", id }]);
+    });
+    // pin / unpin: saved right away in the service DB, nothing is sent to Keitaro
+    el.querySelectorAll("[data-pin]").forEach((b) => b.onclick = () => {
+      const o = stream.offers.find((x) => x.offer_id === +b.dataset.pin);
+      mutate(o.pinned ? "DELETE" : "PUT", `/api/campaigns/${d.id}/offers/${o.offer_id}/pin?stream_id=${sid}`, null,
+        o.pinned ? `Доля оффера ${o.offer_id} откреплена, доли пересчитаны` : `Доля оффера ${o.offer_id} закреплена: ${o.share}%`);
+    });
+    el.querySelectorAll("[data-restore]").forEach((b) => b.onclick = () => {
+      const id = +b.dataset.restore;
+      setOps(view.ops.filter((op) => !(op.type === "remove" && op.id === id)));
+    });
+    el.querySelectorAll("[data-return]").forEach((b) => b.onclick = () => {
+      const o = stream.removed_offers.find((x) => x.offer_id === +b.dataset.return);
+      setOps([...view.ops, { type: "add", id: o.offer_id, name: o.name }]);
+    });
+    $(".refresh-offers-btn", el).onclick = () => refreshOffers();
+    $(".push-btn", el)?.addEventListener("click", () => {
+      const parts = [];
+      if (view.added.length) parts.push(`добавлено ${view.added.length}`);
+      if (view.removed.size) parts.push(`удалено ${view.removed.size}`);
+      mutate("PUT", `/api/campaigns/${d.id}/offers`, { offer_ids: view.finalIds, stream_id: sid },
+        `Запушено в Keitaro: ${view.finalIds.length} офферов (${parts.join(", ")})`,
+        () => delete state.drafts[sid]);
+    });
     const inputs = [...el.querySelectorAll(".share-input")];
     const updateSum = () => {
       const sum = inputs.reduce((a, i) => a + (parseInt(i.value, 10) || 0), 0);
@@ -247,8 +401,11 @@ function renderDetail(d) {
     inputs.forEach((i) => i.addEventListener("input", updateSum));
     $(".reset-shares", el).onclick = () => { inputs.forEach((i) => (i.value = i.dataset.orig)); updateSum(); };
     $(".even-shares", el).onclick = () => {
-      const n = inputs.length, base = Math.floor(100 / n), rest = 100 % n;
-      inputs.forEach((i, k) => (i.value = base + (k < rest ? 1 : 0)));
+      // pinned offers keep the value typed in their field, the others share the rest evenly
+      const pinned = Object.fromEntries(inputs.filter((i) => "pinned" in i.dataset).map((i) => [+i.dataset.offer, parseInt(i.value, 10) || 0]));
+      const { share, error } = sharesWithPins(inputs.map((i) => +i.dataset.offer), pinned);
+      if (error) { toast(error, true); return; }
+      inputs.forEach((i) => (i.value = share[+i.dataset.offer]));
       updateSum();
     };
     $(".save-shares", el).onclick = () => mutate("PUT", `/api/campaigns/${d.id}/shares`, {
@@ -259,30 +416,67 @@ function renderDetail(d) {
 
 function renderStream(s, d) {
   const isOfferStream = s.schema === "landings" || s.offers.length > 0;
-  const head = `<div class="stream-head"><span class="dot"></span><h3>${esc(s.name)} <span class="tag">поток ${s.position}</span></h3>
-      <div class="stat"><b>${s.clicks}</b>клики</div><div class="stat"><b>${s.unique}</b>уник.</div><div class="stat"><b>${s.bots}</b>боты</div></div>`;
+  const head = `<div class="stream-head"><span class="dot"></span><h3>${esc(s.name)} <span class="tag">поток ${s.position}</span></h3></div>`;
   const filters = s.filters.length
     ? `<div class="muted" style="margin-top:6px">Фильтры</div>${s.filters.map((f) => `<div class="filter">${esc(filterText(f))}</div>`).join("")}` : "";
   if (!isOfferStream) {
     return `<div class="stream" data-id="${s.id}">${head}<div class="stream-body">
       <div>${s.action_payload ? `→ <a href="${esc(s.action_payload)}" target="_blank">${esc(s.action_payload)}</a>` : esc(s.schema)}</div>${filters}</div></div>`;
   }
-  const sum = s.offers.reduce((a, o) => a + o.share, 0);
-  const rows = s.offers.map((o) => `<tr>
-      <td class="offer-name"><span class="id">[${o.offer_id}]</span>${esc(o.name)}${o.state !== "active" ? ` <span class="tag">${esc(o.state)}</span>` : ""}</td>
-      <td class="share"><input class="share-input" type="number" min="0" max="100" value="${o.share}" data-orig="${o.share}" data-offer="${o.offer_id}"> %
-        <div class="bar"><i style="width:${o.share}%"></i></div></td>
-      <td class="num">${o.clicks}</td><td class="num">${o.unique}</td><td class="num">${o.conversions}</td><td class="num">${o.revenue.toFixed(2)}</td>
-      <td class="num"><button class="icon-btn" title="Удалить оффер" data-remove="${s.id}:${o.offer_id}" ${s.offers.length === 1 ? "disabled" : ""}>×</button></td>
+  const v = draftView(s);
+  const pending = v.pending;
+  const sum = pending ? 100 : s.offers.reduce((a, o) => a + o.share, 0);
+  const rows = s.offers.map((o) => {
+    const removed = v.removed.has(o.offer_id);
+    const share = removed ? 0 : pending ? v.share[o.offer_id] : o.share;
+    const shareCell = !pending
+      ? `<input class="share-input" type="number" min="0" max="100" value="${o.share}" data-orig="${o.share}" data-offer="${o.offer_id}" ${o.pinned ? "data-pinned" : ""}> %`
+      : `<span class="share-change">${o.share}% → <b>${share}%</b></span>`;
+    const pinTitle = o.pinned ? "Открепить долю" : "Закрепить долю";
+    const action = removed
+      ? `<button class="btn small restore-btn" data-restore="${o.offer_id}" title="Оставить оффер в потоке">↩ Вернуть</button>`
+      : `<span class="row-actions"><button class="icon-btn pin-btn ${o.pinned ? "on" : ""}" title="${pinTitle}" aria-label="${pinTitle}"
+          aria-pressed="${o.pinned}" data-pin="${o.offer_id}">${PIN_ICON}</button><button class="icon-btn" title="Удалить оффер"
+          aria-label="Удалить оффер" data-remove="${o.offer_id}">${TRASH_ICON}</button></span>`;
+    return `<tr class="${removed ? "removed-row" : ""} ${o.pinned && !removed ? "pinned-row" : ""}">
+      <td class="offer-name"><span class="id">[${o.offer_id}]</span>${esc(o.name)}</td>
+      <td class="share">${shareCell}<div class="bar"><i style="width:${share}%"></i></div></td>
+      <td class="num">${o.clicks}</td><td class="num">${o.unique}</td><td class="num">${o.bots}</td>
+      ${statusCell(removed ? "removing" : null, o)}${trendCell(o.trend)}
+      <td class="num">${action}</td>
+    </tr>`;
+  }).join("") + v.added.map((o) => {
+    const share = v.share[o.id];
+    return `<tr class="draft-row">
+      <td class="offer-name"><span class="id">[${o.id}]</span>${esc(o.name)}</td>
+      <td class="share"><span class="share-change"><b>${share}%</b></span><div class="bar"><i style="width:${share}%"></i></div></td>
+      <td class="num muted" colspan="3">статистики пока нет</td>
+      ${statusCell("new", {})}<td class="num trend muted">—</td>
+      <td class="num"><button class="icon-btn" title="Отменить" data-remove="${o.id}">×</button></td>
+    </tr>`;
+  }).join("");
+  const returning = new Set(v.added.map((o) => o.id));
+  const removedRows = (s.removed_offers || []).filter((o) => !returning.has(o.offer_id)).map((o) => `<tr class="removed-row">
+      <td class="offer-name"><span class="id">[${o.offer_id}]</span>${esc(o.name)}</td>
+      <td class="share"><span class="share-change"><b>0%</b></span><div class="bar"><i style="width:0%"></i></div></td>
+      <td class="num">${o.clicks}</td><td class="num">${o.unique}</td><td class="num">${o.bots}</td>
+      ${statusCell("removed", o)}${trendCell(o.trend)}
+      <td class="num"><button class="btn small restore-btn" data-return="${o.offer_id}" title="Вернуть оффер в поток">↩ Вернуть</button></td>
     </tr>`).join("");
-  return `<div class="stream ${s.id === d.offer_stream_id ? "target" : ""}" data-id="${s.id}" data-offers>${head}<div class="stream-body">
+  const pendingBar = pending ? `<div class="pending-bar">
+      ${v.error ? `<span class="pin-error">${esc(v.error)}</span>` : ""}
+      <button class="btn small primary push-btn" title="${v.error ? esc(v.error) : "Отправить в Keitaro итоговый список офферов"}" ${v.error ? "disabled" : ""}>⇪ Запушить в Keitaro</button></div>` : "";
+  return `<div class="stream ${s.id === d.offer_stream_id ? "target" : ""} ${pending ? "pending" : ""}" data-id="${s.id}" data-offers>${head}<div class="stream-body">
     ${filters}
-    <table><thead><tr><th>Оффер</th><th>Доля</th><th class="num">Клики</th><th class="num">Уник.</th><th class="num">Конв.</th><th class="num">Доход</th><th></th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="7" class="muted">Офферов нет</td></tr>`}
-      <tr class="sum-row"><td>Итого</td><td><span class="sum ${sum !== 100 && s.offers.length ? "sum-bad" : ""}">${sum}%</span></td><td colspan="5"></td></tr></tbody></table>
+    <div class="offers-toolbar"><span class="muted sync-status"></span>
+      <button class="btn small refresh-offers-btn" title="Перечитать офферы и статистику из Keitaro (черновик сохранится)">⟳ Обновить офферы</button></div>
+    <table><thead><tr><th>Оффер</th><th>Доля</th><th class="num">Клики</th><th class="num">Уник.</th><th class="num">Боты</th><th>Статус</th><th class="num" title="Клики за выбранный период по сравнению с предыдущим таким же периодом">Трендс</th><th class="num">Действия</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="8" class="muted">Офферов нет</td></tr>`}${removedRows}
+      <tr class="sum-row"><td>Итого</td><td><span class="sum ${sum !== 100 && s.offers.length ? "sum-bad" : ""}">${sum}%</span></td><td colspan="6"></td></tr></tbody></table>
     <div class="share-actions"><span class="muted">Доли изменены вручную</span>
       <button class="btn small even-shares">Поровну</button><button class="btn small reset-shares">Отменить</button>
       <button class="btn small primary save-shares">Сохранить доли</button></div>
+    ${pendingBar}
     <div class="add-row"><div class="ac"><input placeholder="Добавить оффер: ID или название"></div>
       <button class="btn primary add-btn">Добавить</button></div>
   </div></div>`;
@@ -293,9 +487,13 @@ async function loadHistory(e) {
   const ul = $("ul", e.target);
   try {
     const rows = await api("GET", `/api/campaigns/${state.campaignId}/history`);
-    const label = { create_campaign: "создание", add_offer: "добавлен оффер", remove_offer: "удалён оффер", set_shares: "изменены доли" };
-    ul.innerHTML = rows.length ? rows.map((r) => `<li>${esc(r.created_at.replace("T", " "))} — ${label[r.action] || r.action}
-      ${r.payload.offer_id ? "#" + r.payload.offer_id : ""} → ${esc((r.payload.result || []).map((o) => `${o.offer_id}:${o.share}%`).join(", "))}</li>`).join("")
+    const label = { create_campaign: "создание", add_offer: "добавлен оффер", remove_offer: "удалён оффер", set_shares: "изменены доли", change_offers: "изменены офферы",
+      pin_offer: "закреплена доля оффера", unpin_offer: "откреплена доля оффера" };
+    ul.innerHTML = rows.length ? rows.map((r) => /pin_offer$/.test(r.action)
+      ? `<li>${esc(r.created_at.replace("T", " "))} — ${label[r.action]} #${r.payload.offer_id} (${r.payload.share}%)</li>`
+      : `<li>${esc(r.created_at.replace("T", " "))} — ${label[r.action] || r.action}
+      ${[...(r.payload.offer_ids || (r.payload.offer_id && r.action === "add_offer" ? [r.payload.offer_id] : [])).map((i) => "+#" + i),
+         ...(r.payload.removed_offer_ids || (r.payload.offer_id && r.action === "remove_offer" ? [r.payload.offer_id] : [])).map((i) => "−#" + i)].join(", ")} → ${esc((r.payload.result || []).map((o) => `${o.offer_id}:${o.share}%`).join(", "))}</li>`).join("")
       : `<li>Изменений через сервис ещё не было</li>`;
   } catch (err) { ul.innerHTML = `<li>${esc(err.message)}</li>`; }
 }

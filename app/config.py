@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     # Where the "geo" flow sends visitors
     google_url: str = "https://google.com"
 
+    # Timezone for stats intervals ("today", "yesterday"...). Empty = timezone
+    # configured in the tracker, i.e. the same numbers the Keitaro UI shows.
+    stats_timezone: str = ""
+    # Timezone of the tracker itself (Keitaro returns times in it). Used to build the date
+    # windows of the "Трендс" column when STATS_TIMEZONE is empty. tlgk.host runs in UTC.
+    tracker_timezone: str = "UTC"
+
     database_url: str = "sqlite+aiosqlite:///./keitaro_wrapper.db"
 
     # How long the offers list from Keitaro is cached in memory (seconds)

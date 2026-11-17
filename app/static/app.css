@@ -74,7 +74,6 @@ details { margin-top: 14px; } summary { cursor: pointer; color: var(--blue); }
 .stream.target { border-color: #b5dcc4; box-shadow: 0 0 0 3px #eef7f1; }
 .stream-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #fafbfc; border-radius: var(--radius) var(--radius) 0 0; }
 .stream-head h3 { flex: 1; } .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-.stat { text-align: right; min-width: 64px; font-size: 13px; } .stat b { display: block; color: var(--blue); font-size: 15px; }
 .stream-body { padding: 12px 14px; }
 .filter { color: var(--accent-d); }
 table { width: 100%; border-collapse: collapse; }
@@ -100,3 +99,48 @@ td.share { width: 110px; }
 .toast { background: #1f2d3a; color: #fff; padding: 10px 14px; border-radius: 6px; max-width: 420px; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
 .toast.error { background: var(--danger); }
 @media (max-width: 860px) { .editor { grid-template-columns: 1fr; } }
+
+/* draft: offers added in the editor but not pushed to Keitaro yet */
+.stream.pending { border-color: var(--warn); box-shadow: 0 0 0 3px rgba(194, 124, 14, .18); }
+.stream.pending .stream-body { background: rgba(194, 124, 14, .04); }
+.draft-row td { background: rgba(194, 124, 14, .1); }
+.tag.new { background: var(--warn); color: #fff; }
+.share-change { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pending-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px;
+  border-radius: var(--radius); background: rgba(194, 124, 14, .12); border: 1px solid rgba(194, 124, 14, .45); font-size: 13px; }
+.pending-bar span { flex: 1; min-width: 220px; }
+
+/* existing offer marked for removal in the draft: dimmed, share 0%, "Вернуть" button */
+.removed-row td { opacity: .45; }
+.removed-row td:last-child { opacity: 1; }
+.removed-row .offer-name { text-decoration: line-through; }
+.removed-row .bar i { background: var(--muted); }
+.tag.del { background: var(--danger); color: #fff; text-decoration: none; display: inline-block; }
+.restore-btn { white-space: nowrap; }
+
+/* offers window: sync status + manual refresh */
+.offers-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.offers-toolbar .sync-status { flex: 1; min-width: 200px; font-size: 12px; }
+
+.icon-btn .ico { display: block; }
+
+/* pinned share */
+.row-actions { display: inline-flex; gap: 2px; }
+.pin-btn:hover { color: var(--blue); background: #e8f0fa; }
+/* pinned: the pin is filled solid gray */
+.pin-btn.on, .pin-btn.on:hover { color: var(--muted); }
+.pin-btn.on .ico, .pin-btn.on .ico path { fill: currentColor; }
+.pinned-row .share-change b, .pinned-row .share-input { color: var(--blue); }
+.pinned-row .bar i { background: var(--blue); }
+.pin-error { color: var(--danger); font-size: 13px; flex: 1; min-width: 200px; }
+.push-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* "Статус" and "Трендс" columns */
+td.status { white-space: nowrap; }
+td.status .tag { margin-left: 0; }
+.tag.pin { background: #eef1f4; color: var(--muted); }
+td.trend { white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.trend.up { color: var(--accent-d); }
+td.trend.down { color: var(--danger); }
+/* removed rows are dimmed, but their status badge stays readable */
+.removed-row td.status { opacity: 1; }

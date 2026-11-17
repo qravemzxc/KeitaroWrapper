@@ -54,6 +54,44 @@ class OperationLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     keitaro_campaign_id: Mapped[int] = mapped_column(Integer, index=True)
-    action: Mapped[str] = mapped_column(String(32))  # create_campaign / add_offer / remove_offer / set_shares
+    action: Mapped[str] = mapped_column(String(32))  # create_campaign, add_offer, remove_offer, change_offers, set_shares, pin_offer, unpin_offer
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class RemovedOffer(Base):
+    """Offer removed from a stream through the editor.
+
+    It is really deleted from the stream in Keitaro, but the editor keeps
+    showing it (share 0%, not counted) so it can be returned in one click.
+    The row is dropped as soon as the offer is back in the stream.
+    """
+
+    __tablename__ = "removed_offers"
+    __table_args__ = (
+        UniqueConstraint("keitaro_campaign_id", "stream_id", "offer_id", name="uq_removed_campaign_stream_offer"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    keitaro_campaign_id: Mapped[int] = mapped_column(Integer, index=True)
+    stream_id: Mapped[int] = mapped_column(Integer)
+    offer_id: Mapped[int] = mapped_column(Integer)
+    offer_name: Mapped[str | None] = mapped_column(String(512))
+    removed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PinnedOffer(Base):
+    """Offer whose share is pinned in the editor: when offers are added or removed,
+    its share stays the same and only the other offers are re-split."""
+
+    __tablename__ = "pinned_offers"
+    __table_args__ = (
+        UniqueConstraint("keitaro_campaign_id", "stream_id", "offer_id", name="uq_pinned_campaign_stream_offer"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    keitaro_campaign_id: Mapped[int] = mapped_column(Integer, index=True)
+    stream_id: Mapped[int] = mapped_column(Integer)
+    offer_id: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+

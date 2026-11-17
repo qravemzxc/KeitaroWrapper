@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _GEO_RE = re.compile(r"^[A-Z]{2}$")
 
@@ -43,8 +43,30 @@ class CampaignCreate(BaseModel):
 
 
 class OfferAdd(BaseModel):
-    offer_id: int = Field(gt=0)
+    """One offer (`offer_id`) or several at once (`offer_ids`), e.g. a draft pushed from the editor."""
+
+    offer_id: int | None = Field(None, gt=0)
+    offer_ids: list[int] = []
     stream_id: int | None = None
+
+    @model_validator(mode="after")
+    def _need_offer(self):
+        if self.offer_id is None and not self.offer_ids:
+            raise ValueError("Укажите offer_id или offer_ids")
+        if any(i <= 0 for i in self.offer_ids):
+            raise ValueError("ID офферов должны быть положительными")
+        return self
+
+    @property
+    def ids(self) -> list[int]:
+        return ([self.offer_id] if self.offer_id else []) + self.offer_ids
+
+
+class OffersPush(BaseModel):
+    """Final list of offers of the stream: missing ones are removed, new ones are added."""
+
+    stream_id: int | None = None
+    offer_ids: list[int] = Field(min_length=1)
 
 
 class ShareItem(BaseModel):
@@ -65,6 +87,14 @@ class OfferOut(BaseModel):
     state: str | None = None
 
 
+class Trend(BaseModel):
+    """Clicks of the offer in the selected period vs the previous period of the same length."""
+
+    current: int
+    previous: int
+    change_pct: float | None  # None when the previous period had no clicks
+
+
 class StreamOffer(BaseModel):
     offer_id: int
     name: str
@@ -72,8 +102,12 @@ class StreamOffer(BaseModel):
     state: str
     clicks: int = 0
     unique: int = 0
+    bots: int = 0
     conversions: int = 0
     revenue: float = 0
+    removed_at: str | None = None  # set for offers removed through the editor (share 0, not counted)
+    pinned: bool = False  # share is pinned: kept as is when other offers are added/removed
+    trend: Trend | None = None  # None for "all time" or when the trend report failed
 
 
 class StreamOut(BaseModel):
@@ -84,6 +118,8 @@ class StreamOut(BaseModel):
     action_payload: str | None = None
     filters: list[dict] = []
     offers: list[StreamOffer] = []
+    # removed from the stream in Keitaro, kept in the editor so they can be returned
+    removed_offers: list[StreamOffer] = []
     clicks: int = 0
     unique: int = 0
     bots: int = 0

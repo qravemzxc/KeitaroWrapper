@@ -16,13 +16,12 @@ class KeitaroError(Exception):
 
 
 class KeitaroClient:
-    def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, settings: Settings):
         self.settings = settings
         self._client = httpx.AsyncClient(
             base_url=settings.admin_api_url,
             headers={"Api-Key": settings.keitaro_api_key, "Accept": "application/json"},
             timeout=settings.keitaro_timeout,
-            transport=transport,
         )
         self._offers_cache: tuple[float, list[dict]] | None = None
 
